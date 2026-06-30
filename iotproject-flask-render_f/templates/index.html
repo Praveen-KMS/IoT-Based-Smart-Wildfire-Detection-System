@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Smart Wildfire Detection</title>
+  <link
+    href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css"
+    rel="stylesheet"
+  />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+  <style>
+    body { background: #f8f9fa; }
+    .sidebar { width: 200px; position: fixed; top: 0; bottom: 0; background: #343a40; padding-top: 1rem; }
+    .sidebar a { color: #adb5bd; display: block; padding: .5rem 1rem; text-decoration: none; }
+    .sidebar a:hover { background: #495057; color: #fff; }
+    .content { margin-left: 220px; padding: 1rem; }
+    #map { height: 300px; border-radius: .5rem; }
+    .card-summary { text-align: center; }
+  </style>
+</head>
+<body>
+  <nav class="sidebar">
+    <a href="#">Dashboard</a>
+    <a href="#mapSection">Map</a>
+    <a href="#chartsSection">Charts</a>
+    <a href="#historySection">History</a>
+  </nav>
+
+  <div class="content">
+    <h1 class="mb-4">Smart Wildfire Detection</h1>
+
+    <!-- Summary Cards -->
+    <div class="row mb-3" id="summaryCards"></div>
+
+    <!-- Map -->
+    <section id="mapSection" class="mb-4">
+      <h4>Sensor Location</h4>
+      <div id="map"></div>
+    </section>
+
+    <!-- Charts -->
+    <section id="chartsSection" class="mb-4">
+      <h4>Live Sensor Charts</h4>
+      <div class="row">
+        <div class="col-md-4"><canvas id="irChart"></canvas></div>
+        <div class="col-md-4"><canvas id="humChart"></canvas></div>
+        <div class="col-md-4"><canvas id="gasChart"></canvas></div>
+      </div>
+    </section>
+
+    <!-- History Log -->
+    <section id="historySection">
+      <h4>Recent Readings</h4>
+      <table class="table table-striped">
+        <thead>
+          <tr>
+            <th>Time</th>
+            <th>IR</th>
+            <th>Humidity</th>
+            <th>Gas</th>
+            <th>Severity</th>
+          </tr>
+        </thead>
+        <tbody id="historyBody"></tbody>
+      </table>
+    </section>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+  <script>
+    const maxPoints = 20;
+    const LATEST_URL = "/latest";
+    const HISTORY_URL = "/history";
+
+    // Initialize map
+    const map = L.map("map").setView([35.7834, -78.6879], 13);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png").addTo(map);
+    let marker = L.marker([35.7834, -78.6879]).addTo(map);
+
+    // Chart factory
+    function makeChart(ctx, label, unit) {
+      return new Chart(ctx, {
+        type: 'line',
+        data: { labels: [], datasets: [{ label, data: [], tension: 0.2, fill: false }] },
+        options: {
+          scales: {
+            x: { title: { display: true, text: 'Time' } },
+            y: { title: { display: true, text: unit } }
+          }
+        }
+      });
+    }
+    const irChart  = makeChart(document.getElementById('irChart').getContext('2d'),  'IR',       'units');
+    const humChart = makeChart(document.getElementById('humChart').getContext('2d'),'Humidity','%');
+    const gasChart = makeChart(document.getElementById('gasChart').getContext('2d'),'Gas',     'units');
+
+    // Update summary cards
+    function updateSummary(ir, humidity, gas, severity) {
+      const cls = 
+        severity === "HighRisk"   ? "bg-danger text-white" :
+        severity === "MediumRisk" ? "bg-warning text-dark" :
+                                    "bg-success text-white";
+
+      document.getElementById("summaryCards").innerHTML = `
+        <div class="col-md-3">
+          <div class="card card-summary p-3">
+            <h5>IR</h5><p>${ir.toFixed(1)}</p>
+          </div>
+        </div>
+        <div class="col-md-3">
+          <div class="card card-summary p-3">
+            <h5>Humidity</h5><p>${humidity.toFixed(1)}%</p>
+          </div>
+        </div>
+        <div class="col-md-3">
+          <div class="card card-summary p-3">
+            <h5>Gas</h5><p>${gas.toFixed(0)}</p>
+          </div>
+        </div>
+        <div class="col-md-3">
+          <div class="card card-summary p-3 ${cls}">
+            <h5>Severity</h5><p>${severity}</p>
+          </div>
+        </div>
+      `;
+    }
+
+    // Push a single reading
+    function pushReading(doc) {
+      const t = new Date(doc.timestamp).toLocaleTimeString();
+
+      // Map
+      if (doc.lat != null && doc.lng != null) {
+        marker.setLatLng([doc.lat, doc.lng]);
+        map.panTo([doc.lat, doc.lng]);
+      }
+
+      // Summary
+      updateSummary(doc.ir, doc.humidity, doc.gas, doc.severity);
+
+      // Charts: append new point
+      [[irChart, doc.ir], [humChart, doc.humidity], [gasChart, doc.gas]]
+        .forEach(([chart,val]) => {
+          chart.data.labels.push(t);
+          chart.data.datasets[0].data.push(val);
+          if (chart.data.labels.length > maxPoints) {
+            chart.data.labels.shift();
+            chart.data.datasets[0].data.shift();
+          }
+          chart.update();
+        });
+
+      // Table
+      const row = `<tr>
+        <td>${new Date(doc.timestamp).toLocaleString()}</td>
+        <td>${doc.ir.toFixed(1)}</td>
+        <td>${doc.humidity.toFixed(1)}</td>
+        <td>${doc.gas.toFixed(0)}</td>
+        <td>${doc.severity}</td>
+      </tr>`;
+      const tbody = document.getElementById("historyBody");
+      tbody.insertAdjacentHTML("afterbegin", row);
+      if (tbody.rows.length > 100) tbody.deleteRow(-1);
+    }
+
+    // Load history (table only)
+    async function loadHistory() {
+      try {
+        const res = await fetch(HISTORY_URL);
+        const data = await res.json();
+        const tbody = document.getElementById("historyBody");
+        tbody.innerHTML = "";
+        data.forEach(doc => {
+          // we don’t re-draw charts here—just table
+          const row = `<tr>
+            <td>${new Date(doc.timestamp).toLocaleString()}</td>
+            <td>${doc.ir.toFixed(1)}</td>
+            <td>${doc.humidity.toFixed(1)}</td>
+            <td>${doc.gas.toFixed(0)}</td>
+            <td>${doc.severity}</td>
+          </tr>`;
+          tbody.insertAdjacentHTML("beforeend", row);
+        });
+      } catch (e) {
+        console.error("History load failed:", e);
+      }
+    }
+
+    // Load latest (summary + charts + table prepend)
+    async function loadLatest() {
+      try {
+        const res = await fetch(LATEST_URL);
+        if (res.status === 204) return;
+        const doc = await res.json();
+        pushReading(doc);
+      } catch (e) {
+        console.error("Latest load failed:", e);
+      }
+    }
+
+    // Initial load
+    loadHistory();
+    loadLatest();
+
+    // Poll every 2s
+    setInterval(() => {
+      loadLatest();
+    }, 2000);
+  </script>
+</body>
+</html>
