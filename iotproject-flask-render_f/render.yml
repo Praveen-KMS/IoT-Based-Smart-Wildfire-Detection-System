@@ -15,7 +15,7 @@ services:
         --timeout 60"
     envVars:
       - key: MONGO_URI
-        value: "mongodb+srv://user:Raspi123@espread.cjniabe.mongodb.net/espread?retryWrites=true&w=majority"
+        value: "mongodb+srv://user:username@espread.cjniabe.mongodb.net/espread?retryWrites=true&w=majority"
       - key: MONGO_DB
         value: "espread"
       - key: MONGO_COLL
